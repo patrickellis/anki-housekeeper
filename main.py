@@ -1,8 +1,6 @@
 import openai
-import math
 import time
 import re
-from collections import Counter
 import os
 from enum import Enum
 from anki_manager import AnkiManager
@@ -11,23 +9,25 @@ from tqdm import tqdm
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from prompt import (
-    is_definition_card_prompt,
-    get_tags_suggestions_prompt,
-    get_tags_prompt,
+    is_definition_multi_card_prompt,
+    get_definition_prompt_query_suffix,
+    get_tags_suggestions_multiple,
+    get_multiple_tags_query_suffix,
 )
-
-logger = logging.getLogger(__name__)
-REMOVE_LINT_TAG = False
-
-# TODO(Ellis): String multiple queries into a single API call and text block.
 
 
 class Model(Enum):
     GPT4_TURBO = "gpt-4-1106-preview"  # $0.01 / 1K tokens
-    GPT4_TURBO_VISION = "gpt-4-1106-vision-preview"  # $0.01 / 1K tokens
+    GPT4_TURBO_VISION = "gpt-4-vision-preview"  # $0.01 / 1K tokens
     GPT4 = "gpt-4"  # $0.03 / 1K tokens
     GPT3 = "gpt-3.5-turbo-1106"  # $0.0010 / 1K tokens
     GPT3_0613 = "gpt-3.5-turbo"
+
+
+REMOVE_LINT_TAG = False
+logger = logging.getLogger(__name__)
+tag_pattern = re.compile(r"\d+\.\s+(.+)")
+tag_pattern_multi = re.compile(r"Question (\d+)")
 
 
 class ChatGPT:
@@ -74,64 +74,111 @@ class ChatGPT:
         return response.choices[0].message.content
 
 
-tag_pattern = re.compile(r"\d+\.\s+(.+)")
-bot = ChatGPT(Model.GPT4)
+bot = ChatGPT(Model.GPT3_0613)
 
 
-def tag_suggestion_query(question, answer: str | None = None, repeat: int = 1):
+def tag_suggestion_multi_query(prompt: str, repeat: int = 1) -> list[list[str]]:
     tags = []
-    prompt = get_tags_suggestions_prompt(f"{question}\n{answer}")
     for _ in range(repeat):
         response = bot.get_completion(prompt)
-        for line in response.splitlines():
-            match = tag_pattern.match(line)
-            if match:
-                tags.append(match.group(1).replace(" ", "_"))
 
-    c = Counter(tags)
-    tags = [tag for tag in c.keys() if c[tag] >= repeat // 2]
-    return tags
+    curr_tags = []
+    curr_question = 0
+
+    for line in response.splitlines():
+        match = tag_pattern_multi.search(line)
+        if match:
+            curr_question += 1
+            if curr_question > 1:
+                tags.append(curr_tags)
+                curr_tags = []
+        elif curr_question > 0:
+            curr_tags.append(line.replace(" ", "_").replace("-", ""))
+
+    tags.append(curr_tags)
+
+    return tags, response
 
 
-def definition_query(question, answer: str | None = None, repeat: int = 2):
+def definition_multi_query(prompt: str, repeat: int = 2):
     """All queries must return yes for the tag to be applied.
 
     Configured this way to avoid false positives, but not yet extensively
     tested.
     """
+    tags = []
     for _ in range(repeat):
-        prompt = is_definition_card_prompt(question, answer)
         response = bot.get_completion(prompt)
-        if "Yes" not in response:
-            logger.debug(
-                f"Card not a definition. Q: \n{question}.\nA: \n{answer[:300]}"
-            )
-            return False
-    return True
+
+    for line in response.splitlines():
+        if "No" in line:
+            tags.append([])
+        elif "Yes" in line:
+            tags.append(["Definition"])
+    return tags, response
 
 
 def process(dname, cards, manager: AnkiManager):
-    for i, card in enumerate(cards):
-        if i != 0 and i % 10 == 0:
-            tqdm.write(f"{dname}: +10 -> {i}")
+    tags_prompt = get_tags_suggestions_multiple()
+    definition_prompt = is_definition_multi_card_prompt()
+    card_count = 1
+    MAX_PROMPT_LENGTH = 3000
 
+    for i, card in enumerate(cards):
+        is_final_card = i == len(cards) - 1
         if card.has_lint_tag():
             continue
 
         question = card.question
         answer = card.answer
-        tags = []
+        answer = answer.strip()
 
-        # tags = tag_suggestion_query(question, answer, repeat=2)
-        # tags.append("LINT_TAGS=1")
+        lines = [
+            line
+            for line in answer.splitlines()
+            if not line.isspace() and not len(line) == 0
+        ]
+        answer = "\n".join(lines)
 
-        is_definition = definition_query(question, answer, repeat=1)
-        if is_definition:
-            tags.append("Definition")
+        tags_prompt += get_multiple_tags_query_suffix(question, card_count)
+        definition_prompt += get_definition_prompt_query_suffix(
+            question, answer, card_count
+        )
 
-        card.add_suggested_tags(tags)
-        if REMOVE_LINT_TAG:
-            card.remove_lint_tag()
+        if is_final_card or any(
+            [
+                len(tags_prompt) > MAX_PROMPT_LENGTH,
+                len(definition_prompt) > MAX_PROMPT_LENGTH,
+            ]
+        ):
+            definition_tags, definition_response = definition_multi_query(
+                definition_prompt, repeat=1
+            )
+            suggested_tags, suggested_response = tag_suggestion_multi_query(
+                tags_prompt, repeat=1
+            )
+            if card_count != len(suggested_tags):
+                logger.warning(
+                    f"Found {len(suggested_tags)} sets of suggested tags, but there are {card_count} cards."
+                )
+            else:
+                for card, tags in zip(cards[i - card_count : i + 1], suggested_tags):
+                    card.add_tags(tags)
+
+            if card_count != len(definition_tags):
+                logger.error(
+                    f"Found {len(definition_tags)} sets of definition tags, but there are {card_count} cards."
+                )
+            else:
+                for card, tags in zip(cards[i - card_count : i + 1], definition_tags):
+                    card.add_tags(tags)
+
+            tags_prompt = get_tags_suggestions_multiple()
+            definition_prompt = is_definition_multi_card_prompt()
+
+            card_count = 1
+        else:
+            card_count += 1
 
     return dname, cards
 
@@ -144,35 +191,27 @@ class App:
         logger.info("Starting Thread Pool..")
 
         with AnkiManager() as manager:
-            card_data = [
-                (d, cards) for d, cards in manager.cards.items() if len(cards) > 0
-            ]
-            n_total_decks = len(manager.cards)
+            args = (
+                (dname, cards, manager)
+                for dname, cards in manager.cards.items()
+                if len(cards) > 0
+            )
+            n_cards = sum(len(cards) for _, cards in manager.cards.items())
+            n_decks = len(manager.cards)
+            n_zero_card_decks = list(manager.cards.values()).count(0)
+            n_workers = max(min(n_decks - n_zero_card_decks, 10), 1)
+            logger.info(f"Spawning {n_workers} Thread Workers.")
 
-            for i in range(0, n_total_decks, 5):
-                logger.info(
-                    f"Processing batch {i//5} ({i}-{i+5}) of {math.ceil(n_total_decks / 5)}"
-                )
-                batch = list(card_data)[i : i + 5]
-                args = (
-                    (dname, cards, manager) for dname, cards in batch if len(cards) > 0
-                )
-                n_cards = sum(len(cards) for _, cards in batch)
-                n_decks = len(batch)
-                n_zero_card_decks = sum(len(cards) == 0 for _, cards in batch)
-                n_workers = min(n_decks - n_zero_card_decks, 10)
-                logger.info(f"Spawning {n_workers} Thread Workers.")
-
-                with tqdm(total=n_cards) as pbar:
-                    with ThreadPoolExecutor(max_workers=n_workers) as executor:
-                        futures = [
-                            executor.submit(process, *arguments) for arguments in args
-                        ]
-                        for future in as_completed(futures):
-                            dname, cards = future.result()
-                            pbar.update(len(cards))
-                            tqdm.write(f"{dname} complete. {len(cards)} linted.")
-                            manager.flush_cards(cards)
+            with tqdm(total=n_cards) as pbar:
+                with ThreadPoolExecutor(max_workers=n_workers) as executor:
+                    futures = [
+                        executor.submit(process, *arguments) for arguments in args
+                    ]
+                    for future in as_completed(futures):
+                        dname, cards = future.result()
+                        pbar.update(len(cards))
+                        tqdm.write(f"{dname} complete. {len(cards)} linted.")
+                        manager.flush_cards(cards)
 
 
 def main() -> None:

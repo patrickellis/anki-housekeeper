@@ -14,6 +14,7 @@ import logging
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
+REMOVE_LINT_TAG = False
 
 
 def get_collection(collection_path: Path) -> Collection | None:
@@ -40,12 +41,6 @@ def get_deck_names_and_ids(col: DeckManager) -> Sequence[DeckNameId]:
 
 def exclude_non_ascii(s: str) -> str:
     return "".join([c for c in s if ord(c) <= 256 and c not in ("/", "\0")])
-
-
-"""
-See [here](https://github.com/open-spaced-repetition/fsrs4anki/blob/5a34201f4d5b3a9cc1a5da4511b6bc32b7c6e909/fsrs4anki_optimizer.ipynb)
-for more details and explanations of the options below.
-"""
 
 
 def clean_html(html: str) -> str:
@@ -83,8 +78,7 @@ class Card(object):
     def has_lint_tag(self) -> None:
         return "LINT_TAGS=1" in self.tags
 
-    def add_suggested_tags(self, tags: list[str]) -> None:
-        self.suggested_tags = tags
+    def add_tags(self, tags: list[str]) -> None:
         self.tags += tags
         self.tags = list(dict.fromkeys(self.tags))
 
@@ -118,7 +112,7 @@ class AnkiManager(object):
         self.decks: tuple[str, str] = []
 
         for dinfo in get_deck_names_and_ids(self.collection):
-            if "SRE" not in dinfo.name:
+            if "SRE" not in dinfo.name or "Vocab" in dinfo.name:
                 logger.debug(f"Skipping deck {dinfo.name}")
             else:
                 self.decks.append((dinfo.name, dinfo.id))
@@ -128,6 +122,16 @@ class AnkiManager(object):
     def flush_cards(self, cards: list[Card]) -> None:
         # TODO: extend this to use col.update_cards() when there are changes to
         # Individual cards being made. Currently we only change tags.
+        if REMOVE_LINT_TAG:
+            for card in cards:
+                card.remove_lint_tag()
+
+        notes = [card.get_note_with_tags() for card in cards]
+
+        if not REMOVE_LINT_TAG:
+            for note in notes:
+                if "LINT_TAGS=1" not in note.tags:
+                    note.tags.append("LINT_TAGS=1")
         self.collection.update_notes([card.get_note_with_tags() for card in cards])
 
     def flush_all_cards(self) -> None:
@@ -158,7 +162,7 @@ class AnkiManager(object):
         return cards
 
     def write_cards(self, cards: list[Card]):
-        print("Writing cards to questions.csv")
+        logger.debug("Writing cards to questions.csv")
         with open("questions.csv", "w") as f:
             writer = csv.writer(f, delimiter=",")
             writer.writerow(["deck", "question", "suggested tags"])
