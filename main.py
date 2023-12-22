@@ -5,6 +5,7 @@ from collections import Counter
 import os
 from enum import Enum
 from anki_manager import AnkiManager
+from dotenv import load_dotenv
 from tqdm import tqdm
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,8 +15,10 @@ from prompt import (
     get_tags_prompt,
 )
 
+load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 logger = logging.getLogger(__name__)
+
 REMOVE_LINT_TAG = False
 
 
