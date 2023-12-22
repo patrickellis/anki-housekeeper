@@ -1,14 +1,20 @@
 import csv
 import re
+import copy
+from dotenv import load_dotenv
 from typing import Any, Sequence
 from pathlib import Path
 import os
 from anki.collection import Collection
 from anki.exporting import *
-from anki.decks import DeckManager
-from anki.decks import DeckNameId
-import sys
+from anki.decks import (
+    DeckManager,
+    DeckConfigDict,
+    DeckNameId,
+    DeckConfigId,
+)
 
+import sys
 
 import logging
 from bs4 import BeautifulSoup
@@ -95,6 +101,7 @@ class AnkiManager(object):
         self,
         profile_dir: str | None = None,
         collection_filename: str = "collection.anki2",
+        fetch_cards: bool = True,
     ):
         if profile_dir is None:
             profile_dir = os.getenv("PROFILE_DIR")
@@ -112,12 +119,43 @@ class AnkiManager(object):
         self.decks: tuple[str, str] = []
 
         for dinfo in get_deck_names_and_ids(self.collection):
-            if "SRE" not in dinfo.name or "Vocab" in dinfo.name:
+            # if "SRE" not in dinfo.name or "Vocab" in dinfo.name:
+            if False:
                 logger.debug(f"Skipping deck {dinfo.name}")
             else:
                 self.decks.append((dinfo.name, dinfo.id))
 
-        self.cards = self.get_cards()
+        if fetch_cards:
+            self.cards = self.get_cards()
+
+    def get_deck_configs(self):
+        self.deck_configs = self.deck_manager.all_config()
+        return self.deck_configs
+
+    def create_deck_config(self, name: str, clone: DeckConfigDict | None = None):
+        return self.deck_manager.add_config_returning_id(name, clone)
+
+    def remove_deck_config(self, name: str):
+        for config in self.get_deck_configs():
+            if config["name"] == name:
+                self.deck_manager.remove_config(config["id"])
+
+    def remove_decks(self, dids: list[int]):
+        return self.deck_manager.remove(dids)
+
+    def get_leaf_decks(self):
+        return [d for d in self.decks if len(self.deck_manager.children(d[1])) == 0]
+
+    def get_decks(self):
+        return self.decks
+
+    def create_deck(self, name: str, deck_config_id: int = 0):
+        new_deck = self.deck_manager.col._backend.new_deck()
+        new_deck = self.deck_manager.add_deck(new_deck)
+        new_deck = self.deck_manager.get(did=new_deck.id)
+        new_deck["name"] = name
+        new_deck["conf"] = deck_config_id
+        return self.deck_manager.update(new_deck)
 
     def flush_cards(self, cards: list[Card]) -> None:
         # TODO: extend this to use col.update_cards() when there are changes to
@@ -171,12 +209,75 @@ class AnkiManager(object):
 
 
 def main():
-    with AnkiManager() as manager:
-        manager.write_cards(manager.cards)
+    with AnkiManager(fetch_cards=False) as manager:
+        # TODO: standardize deck configs
+        # 1. Set all review max limits to 9999
+        # 2. Set all Review sort order to "Due date, and then random."
+
+        custom_deck_names = {
+            "high_ret_low_ivl": "🔺 High Retention Low Interval (0.96,30)",
+            "high_ret": "🔺 High Retention (0.96)",
+        }
+
+        def create_retention_and_interval_decks():
+            clone = manager.deck_manager.get_config(1)
+            high_ret_clone = copy.deepcopy(clone)
+            high_ret_clone["desiredRetention"] = 0.96
+            id_high_ret = manager.create_deck_config(
+                custom_deck_names["high_ret"], high_ret_clone
+            )
+
+            high_ret_low_ivl_clone = copy.deepcopy(clone)
+            high_ret_low_ivl_clone["desiredRetention"] = 0.96
+            high_ret_low_ivl_clone["rev"]["maxIvl"] = 30
+            id_high_ret_low_ivl = manager.create_deck_config(
+                custom_deck_names["high_ret_low_ivl"], high_ret_low_ivl_clone
+            )
+            leaf_decks = manager.get_leaf_decks()
+
+            for deck in leaf_decks:
+                if "SRE" not in deck[0]:
+                    continue
+
+                if any((cname in deck[0] for cname in custom_deck_names.values())):
+                    continue
+
+                for ret_deck_title in custom_deck_names.values():
+                    if "Low Interval" in ret_deck_title:
+                        dcid = id_high_ret_low_ivl
+                    else:
+                        dcid = id_high_ret
+                    # set_collapsed
+                    manager.create_deck(
+                        name=deck[0] + f"::{ret_deck_title}",
+                        deck_config_id=DeckConfigId(dcid),
+                    )
+                    manager.deck_manager.set_collapsed(deck[1], True, None)
+
+        def remove_retention_and_interval_decks(deck_names: list[str]):
+            to_remove = [
+                d[1]
+                for d in manager.get_decks()
+                if any([cname in d[0] for cname in deck_names])
+            ]
+            logger.warning(f"Removing decks: {to_remove}")
+            manager.remove_decks(to_remove)
+
+        def remove_retention_and_interval_configs(config_names: list[str]):
+            for cname in config_names:
+                logger.warning(f"Removing deck config: {cname}")
+                manager.remove_deck_config(cname)
+
+        reset = False
+
+        if reset:
+            remove_retention_and_interval_decks(custom_deck_names.values())
+            remove_retention_and_interval_configs(custom_deck_names.values())
+        else:
+            create_retention_and_interval_decks()
 
 
 if __name__ == "__main__":
-    from dotenv import load_dotenv
-
+    logging.basicConfig(level=logging.INFO)
     load_dotenv()
     main()
