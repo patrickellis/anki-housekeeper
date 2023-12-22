@@ -19,10 +19,14 @@ You can configure it to:
 pip install ankeep
 ```
 
+### ChatGPT Access
+
 > [!IMPORTANT]
 > You need to provide a ChatGPT API Token to make use of some features.
 > You can do this by creating an environment variable called `OPENAI_API_KEY`
 > whose value is your token.
+
+Sign up for an account for ChatGPT [here][2].
 
 ## Usage
 
@@ -46,10 +50,26 @@ Run `ankeep --help` to view all options alongside their explanations.
 Show available command-line options and exit.
 
 `-p, --profile`
-Path to your Anki profile directory. By default, this points to `$HOME/Library/Application Support/Anki2/<user>`.
+Path to your Anki profile directory.
+By default, this points to `$HOME/Library/Application Support/Anki2/<user>`.
 
 `-c, --config`
-Read configuration options from a configuration file. See below for more details on the configuration file.
+Read configuration options from a configuration file.
+See below for more details.
+
+`-m, --model`
+The ChatGPT model to use. GPT-4 models have access to larger, more recent data sets.
+The cost of API tokens for each model varies; by default Ankeep is configured to use
+an older, less expensive model.
+
+Options: [`"gpt-4"`,`"gpt-4-1106-preview"`,`"gpt-3.5-turbo-1106"`].
+Default: `"gpt-3.5-turbo-1106"`.
+
+You can view ChatGPT pricing information [here][1].
+
+`-d, --decknames`
+A list of Anki decknames to run Ankeep on. Useful if you have a large collection,
+but only need to lint a small portion of your cards.
 
 `-q, --quiet`
 Reduces the amount of output produced by Ankeep.
@@ -57,4 +77,14 @@ Reduces the amount of output produced by Ankeep.
 `-v, --verbose`
 Increases the amount of output produced by Ankeep.
 
+### The Configuration File
+
+You can optionally configure Ankeep using a configuration file.
+Place it in the appropriate location, depending on your Operating System:
+
+- Windows: `~\.ankeep`
+- Unix-like (Linux, MacOS, etc.): `$XDG_CONFIG_HOME/ankeep` (`~/.config/ankeep` by default)
+
 [0]: https://www.supermemo.com/en/blog/twenty-rules-of-formulating-knowledge
+[1]: https://openai.com/pricing
+[2]: https://platform.openai.com/
