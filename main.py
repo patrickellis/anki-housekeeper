@@ -1,4 +1,5 @@
 import openai
+import math
 import time
 import re
 from collections import Counter
@@ -15,11 +16,10 @@ from prompt import (
     get_tags_prompt,
 )
 
-load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
 logger = logging.getLogger(__name__)
-
 REMOVE_LINT_TAG = False
+
+# TODO(Ellis): String multiple queries into a single API call and text block.
 
 
 class Model(Enum):
@@ -56,12 +56,12 @@ class ChatGPT:
                         time_period /= 1000
                     elif units == "m":
                         time_period *= 60
-                logger.debug(
+                logger.warning(
                     f"Hit API rate limit. Retrying in {time_period}s.", exc_info=True
                 )
             else:
                 time_period = 5
-                logger.debug(
+                logger.warning(
                     "Hit API rate limit. "
                     "Could not parse error message for timeout period, "
                     f"sleeping for {time_period} seconds.",
@@ -75,8 +75,7 @@ class ChatGPT:
 
 
 tag_pattern = re.compile(r"\d+\.\s+(.+)")
-# bot = ChatGPT(Model.GPT3)
-bot = ChatGPT(Model.GPT3_0613)
+bot = ChatGPT(Model.GPT4)
 
 
 def tag_suggestion_query(question, answer: str | None = None, repeat: int = 1):
@@ -90,7 +89,7 @@ def tag_suggestion_query(question, answer: str | None = None, repeat: int = 1):
                 tags.append(match.group(1).replace(" ", "_"))
 
     c = Counter(tags)
-    tags = [tag for tag in c.keys() if c[tag] > repeat // 2]
+    tags = [tag for tag in c.keys() if c[tag] >= repeat // 2]
     return tags
 
 
@@ -121,16 +120,16 @@ def process(dname, cards, manager: AnkiManager):
 
         question = card.question
         answer = card.answer
+        tags = []
 
-        tags = tag_suggestion_query(question, answer, repeat=3)
-        tags.append("LINT_TAGS=1")
+        # tags = tag_suggestion_query(question, answer, repeat=2)
+        # tags.append("LINT_TAGS=1")
 
-        is_definition = definition_query(question, answer, repeat=2)
+        is_definition = definition_query(question, answer, repeat=1)
         if is_definition:
             tags.append("Definition")
 
         card.add_suggested_tags(tags)
-
         if REMOVE_LINT_TAG:
             card.remove_lint_tag()
 
@@ -145,27 +144,35 @@ class App:
         logger.info("Starting Thread Pool..")
 
         with AnkiManager() as manager:
-            args = (
-                (dname, cards, manager)
-                for dname, cards in manager.cards.items()
-                if len(cards) > 0
-            )
-            n_cards = sum(len(cards) for cards in manager.cards.values())
-            n_decks = len(manager.cards)
-            n_zero_card_decks = sum(len(cards) == 0 for cards in manager.cards.values())
-            n_workers = min(n_decks - n_zero_card_decks, 10)
-            logger.info(f"Spawning {n_workers} Thread Workers.")
+            card_data = [
+                (d, cards) for d, cards in manager.cards.items() if len(cards) > 0
+            ]
+            n_total_decks = len(manager.cards)
 
-            with tqdm(total=n_cards) as pbar:
-                with ThreadPoolExecutor(max_workers=n_workers) as executor:
-                    futures = [
-                        executor.submit(process, *arguments) for arguments in args
-                    ]
-                    for future in as_completed(futures):
-                        dname, cards = future.result()
-                        pbar.update(len(cards))
-                        tqdm.write(f"{dname} complete. {len(cards)} linted.")
-                        manager.flush_cards(cards)
+            for i in range(0, n_total_decks, 5):
+                logger.info(
+                    f"Processing batch {i//5} ({i}-{i+5}) of {math.ceil(n_total_decks / 5)}"
+                )
+                batch = list(card_data)[i : i + 5]
+                args = (
+                    (dname, cards, manager) for dname, cards in batch if len(cards) > 0
+                )
+                n_cards = sum(len(cards) for _, cards in batch)
+                n_decks = len(batch)
+                n_zero_card_decks = sum(len(cards) == 0 for _, cards in batch)
+                n_workers = min(n_decks - n_zero_card_decks, 10)
+                logger.info(f"Spawning {n_workers} Thread Workers.")
+
+                with tqdm(total=n_cards) as pbar:
+                    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+                        futures = [
+                            executor.submit(process, *arguments) for arguments in args
+                        ]
+                        for future in as_completed(futures):
+                            dname, cards = future.result()
+                            pbar.update(len(cards))
+                            tqdm.write(f"{dname} complete. {len(cards)} linted.")
+                            manager.flush_cards(cards)
 
 
 def main() -> None:
@@ -177,6 +184,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    load_dotenv()
+    openai.api_key = os.getenv("OPENAI_API_KEY")
     format = "%(asctime)s: %(message)s"
     logging.basicConfig(format=format, datefmt="%H:%M:%S")
     logger.setLevel(level=logging.INFO)

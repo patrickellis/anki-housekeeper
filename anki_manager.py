@@ -1,37 +1,33 @@
 import csv
 import re
-from typing import Any
+from typing import Any, Sequence
 from pathlib import Path
 import os
-from anki.collection import Collection, DeckIdLimit
+from anki.collection import Collection
 from anki.exporting import *
-from anki.decks import DeckManager, DeckDict
+from anki.decks import DeckManager
 from anki.decks import DeckNameId
+import sys
 
 
 import logging
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
-PROFILE_DIR = Path(os.getenv("PROFILE_DIR")).expanduser()
-GLOBAL_DECK_NAME = "global config for FSRS4Anki"
-MAKE_BACKUPS = False
 
 
-def get_collection(filename: str = "collection.anki2") -> Collection | None:
-    collection_path = PROFILE_DIR / filename
+def get_collection(collection_path: Path) -> Collection | None:
     try:
         return Collection(str(collection_path))
     except FileNotFoundError:
-        log.error(f"Collection file not found! File does not exist: {collection_path}")
+        logger.error(
+            f"Collection file not found! File does not exist: {collection_path}"
+        )
+        sys.exit(1)
 
 
 def get_deck_manager(col: Collection) -> DeckManager:
     return DeckManager(col)
-
-
-def get_exporter(col: Collection) -> AnkiPackageExporter:
-    return AnkiPackageExporter(col)
 
 
 def get_deck_names(col: Collection) -> list:
@@ -100,45 +96,28 @@ class Card(object):
         return self.note
 
 
-# Export
-def backup(deck: DeckDict | None, name: str) -> None:
-    """
-    Makes a backup of the deck with the given name.
-    """
-    if name != GLOBAL_DECK_NAME and not deck:
-        raise ValueError(f"Deck {name} not found!")
-
-    fname = os.path.abspath(f"{exclude_non_ascii(name)}.apkg")
-    fd = open(fname, "w")
-    os.unlink(fname)
-    fd.close()
-
-    if name == GLOBAL_DECK_NAME:
-        collection.export_collection_package(
-            out_path=fname, include_media=False, legacy=True
-        )
-    else:
-        collection.export_anki_package(
-            out_path=fname,
-            limit=DeckIdLimit(deck["id"]),
-            with_scheduling=True,
-            with_media=False,
-            legacy_support=True,
-        )
-
-
 class AnkiManager(object):
-    def __init__(self):
-        self.collection: Collection = get_collection()  # type: ignore
+    def __init__(
+        self,
+        profile_dir: str | None = None,
+        collection_filename: str = "collection.anki2",
+    ):
+        if profile_dir is None:
+            profile_dir = os.getenv("PROFILE_DIR")
+
+        self.profile_dir = Path(profile_dir).expanduser()
+        self.collection_filename = Path(collection_filename)
+        self.collection_path = self.profile_dir / self.collection_filename
+        self.collection: Collection = get_collection(self.collection_path)  # type: ignore
 
         if self.collection is None:
             logger.critical("Could not fetch collection. Aborting.")
+            sys.exit(1)
 
         self.deck_manager = get_deck_manager(self.collection)
         self.decks: tuple[str, str] = []
 
         for dinfo in get_deck_names_and_ids(self.collection):
-            # if "SRE" not in dinfo.name:
             if "SRE" not in dinfo.name:
                 logger.debug(f"Skipping deck {dinfo.name}")
             else:
@@ -193,4 +172,7 @@ def main():
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+
+    load_dotenv()
     main()

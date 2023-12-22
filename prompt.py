@@ -6,26 +6,17 @@ def get_tags_prompt(question: str):
 
     Topics
     =====
-    1. Dictionaries
+    1. Data Structures
     2. Python
     3. Golang
-    4. Complexity
-    5. Processes/Threads
+    4. Markdown
+    5. Security
     6. Operating Systems
     7. Linux
-    8. SRE
-    9. Networking
-    10. Memory/Storage
-    11. Maths
-    12. Number Theory
-    13. Virtualization
-    14. File Systems
-    16. I/O Management
-    17. Parallel Computing
-    18. Hardware
-    19. Streaming Processors
-    20. Security
-
+    8. Networking
+    9. Maths
+    10. I/O Management
+    11. Hardware
 
     Question
     =======
@@ -43,24 +34,19 @@ def get_tags_suggestions_prompt(question: str):
 
     Topics
     =====
-    1. Dictionaries
+    1. Data Structures
     2. Python
     3. Golang
-    4. Complexity
-    5. Processes/Threads
+    4. Markdown
+    5. Security
     6. Operating Systems
     7. Linux
-    8. SRE
-    9. Networking
-    10. Memory/Storage
-    11. Maths
-    12. Number Theory
-    13. Virtualization
-    14. File Systems
-    16. I/O Management
-    17. Parallel Computing
-    18. Hardware
-    19. Streaming Processors
+    8. Networking
+    9. Maths
+    10. I/O Management
+    11. Hardware
+
+
 
 
     Question

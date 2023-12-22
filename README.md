@@ -1,8 +1,12 @@
-# Anki Housekeeper
+# Ankeep - Anki Housekeeper
 
-The Anki Housekeeper keeps your Anki collection neat and tidy.
+> [!WARNING]
+> Ankeep is a work-in-progress. It will take time to polish up all functionality
+> to a point where it is ready for general use. In the meantime, if you
+> have suggestions on how I could improve Ankeep or implement additional
+> functionality, raise an issue on this repository and I will investigate.
 
-You can configure it to:
+The Anki Housekeeper keeps your Anki collection neat and tidy. It can:
 
 1. Automatically tag your cards based on topic.
 
@@ -14,6 +18,9 @@ You can configure it to:
    These cards are tagged and / or output to the console or a file (TODO).
 
 ## Installation
+
+> [!NOTE]
+> Requires Python 3.10+
 
 ```bash
 pip install ankeep
