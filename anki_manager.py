@@ -13,7 +13,7 @@ import logging
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
-PROFILE_DIR = Path("~/Library/Application Support/Anki2/Ellis").expanduser()
+PROFILE_DIR = Path(os.getenv("PROFILE_DIR")).expanduser()
 GLOBAL_DECK_NAME = "global config for FSRS4Anki"
 MAKE_BACKUPS = False
 
