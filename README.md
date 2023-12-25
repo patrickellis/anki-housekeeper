@@ -26,6 +26,20 @@ The Anki Housekeeper keeps your Anki collection neat and tidy. It can:
 pip install ankeep
 ```
 
+```Python
+def process(dname, cards, manager: AnkiManager):
+    tqdm.write(f"Began linting {dname}.")
+    tags_prompt = get_tags_suggestions_multiple()
+    definition_prompt = is_definition_multi_card_prompt()
+    card_count = 1
+    MAX_PROMPT_LENGTH = 3000
+
+    for i, card in enumerate(cards):
+        is_final_card = i == len(cards) - 1
+        if card.has_lint_tag():
+            continue
+```
+
 ### ChatGPT Access
 
 > [!IMPORTANT]
